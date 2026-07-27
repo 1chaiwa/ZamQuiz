@@ -1,0 +1,434 @@
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Alert,
+  ActivityIndicator,
+} from 'react-native';
+import { supabase } from '../utils/supabase';
+import { Ionicons } from '@expo/vector-icons';
+
+export default function QuizTaking({ navigation, route }) {
+  const { quizId } = route.params;
+  const [quiz, setQuiz] = useState(null);
+  const [questions, setQuestions] = useState([]);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [answers, setAnswers] = useState({});
+  const [attemptId, setAttemptId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [showFreeQuestions, setShowFreeQuestions] = useState(true);
+  const [questionCount, setQuestionCount] = useState(0);
+
+  useEffect(() => {
+    fetchQuizData();
+  }, []);
+
+  const fetchQuizData = async () => {
+    try {
+      // Fetch quiz details
+      const { data: quizData } = await supabase
+        .from('quizzes')
+        .select(`
+          *,
+          subjects (name, code),
+          grades (name)
+        `)
+        .eq('id', quizId)
+        .single();
+
+      setQuiz(quizData);
+
+      // Fetch questions
+      const { data: questionsData } = await supabase
+        .from('questions')
+        .select('*')
+        .eq('quiz_id', quizId)
+        .order('created_at');
+
+      setQuestions(questionsData || []);
+
+      // Create quiz attempt
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: attemptData } = await supabase
+        .from('quiz_attempts')
+        .insert({
+          student_id: user.id,
+          quiz_id: quizId,
+          total_questions: questionsData?.length || 0,
+          status: 'in_progress',
+        })
+        .select()
+        .single();
+
+      setAttemptId(attemptData.id);
+      setLoading(false);
+    } catch (error) {
+      console.error('Error fetching quiz:', error);
+      Alert.alert('Error', 'Failed to load quiz');
+      setLoading(false);
+    }
+  };
+
+  const handleAnswerSelect = (questionId, answer) => {
+    setAnswers(prev => ({
+      ...prev,
+      [questionId]: answer,
+    }));
+  };
+
+  const handleNext = () => {
+    if (currentQuestionIndex < questions.length - 1) {
+      // Check if it's time to show payment
+      if (currentQuestionIndex === 3 && quiz?.is_paid) {
+        setShowFreeQuestions(false);
+        navigation.navigate('Payment', {
+          quizId: quiz.id,
+          attemptId: attemptId,
+          amount: quiz.price,
+          onPaymentComplete: () => {
+            setShowFreeQuestions(true);
+            setCurrentQuestionIndex(currentQuestionIndex + 1);
+          },
+        });
+        return;
+      }
+      setCurrentQuestionIndex(currentQuestionIndex + 1);
+    }
+  };
+
+  const handlePrevious = () => {
+    if (currentQuestionIndex > 0) {
+      setCurrentQuestionIndex(currentQuestionIndex - 1);
+    }
+  };
+
+  const handleSubmit = async () => {
+    Alert.alert(
+      'Submit Quiz',
+      'Are you sure you want to submit your answers?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Submit',
+          style: 'default',
+          onPress: submitQuiz,
+        },
+      ]
+    );
+  };
+
+  const submitQuiz = async () => {
+    setSubmitting(true);
+    let correctCount = 0;
+
+    try {
+      // Calculate score and save answers
+      for (const question of questions) {
+        const selectedAnswer = answers[question.id];
+        const isCorrect = selectedAnswer === question.correct_answer;
+        if (isCorrect) correctCount++;
+
+        await supabase
+          .from('student_answers')
+          .insert({
+            attempt_id: attemptId,
+            question_id: question.id,
+            selected_answer: selectedAnswer || '',
+            is_correct: isCorrect,
+            marks_awarded: isCorrect ? question.marks : 0,
+          });
+      }
+
+      // Update attempt
+      const score = Math.round((correctCount / questions.length) * 100);
+      await supabase
+        .from('quiz_attempts')
+        .update({
+          score: score,
+          correct_answers: correctCount,
+          wrong_answers: questions.length - correctCount,
+          completed_at: new Date().toISOString(),
+          status: 'completed',
+        })
+        .eq('id', attemptId);
+
+      setSubmitting(false);
+      navigation.navigate('Results', {
+        attemptId: attemptId,
+        score: score,
+        totalQuestions: questions.length,
+        correctAnswers: correctCount,
+        quizTitle: quiz.title,
+      });
+    } catch (error) {
+      console.error('Error submitting quiz:', error);
+      Alert.alert('Error', 'Failed to submit quiz');
+      setSubmitting(false);
+    }
+  };
+
+  const renderQuestion = () => {
+    if (!questions.length) return null;
+    const question = questions[currentQuestionIndex];
+    const isAnswered = answers[question.id] !== undefined;
+
+    return (
+      <View style={styles.questionContainer}>
+        <View style={styles.questionHeader}>
+          <Text style={styles.questionNumber}>
+            Question {currentQuestionIndex + 1} of {questions.length}
+          </Text>
+          <Text style={styles.questionStatus}>
+            {isAnswered ? '✓ Answered' : 'Not Answered'}
+          </Text>
+        </View>
+
+        <Text style={styles.questionText}>{question.question_text}</Text>
+
+        {question.question_type === 'multiple_choice' && (
+          <View style={styles.optionsContainer}>
+            {Object.entries(question.options || {}).map(([key, value]) => (
+              <TouchableOpacity
+                key={key}
+                style={[
+                  styles.optionButton,
+                  answers[question.id] === key && styles.optionSelected,
+                ]}
+                onPress={() => handleAnswerSelect(question.id, key)}
+              >
+                <Text style={styles.optionLabel}>{key}.</Text>
+                <Text style={styles.optionText}>{value}</Text>
+                {answers[question.id] === key && (
+                  <Ionicons name="checkmark-circle" size={24} color="#FF6B00" />
+                )}
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#FF6B00" />
+      </View>
+    );
+  }
+
+  if (!showFreeQuestions) {
+    return null; // Payment screen handles this
+  }
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Ionicons name="arrow-back" size={24} color="#fff" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>{quiz?.title}</Text>
+        <View style={styles.headerRight} />
+      </View>
+
+      <View style={styles.progressContainer}>
+        <View style={styles.progressBar}>
+          <View
+            style={[
+              styles.progressFill,
+              {
+                width: `${((currentQuestionIndex + 1) / questions.length) * 100}%`,
+              },
+            ]}
+          />
+        </View>
+        <Text style={styles.progressText}>
+          {currentQuestionIndex + 1} of {questions.length}
+        </Text>
+      </View>
+
+      <ScrollView style={styles.content}>
+        {renderQuestion()}
+      </ScrollView>
+
+      <View style={styles.footer}>
+        <TouchableOpacity
+          style={[styles.button, styles.secondaryButton]}
+          onPress={handlePrevious}
+          disabled={currentQuestionIndex === 0}
+        >
+          <Text style={styles.secondaryButtonText}>Previous</Text>
+        </TouchableOpacity>
+
+        {currentQuestionIndex === questions.length - 1 ? (
+          <TouchableOpacity
+            style={[styles.button, styles.submitButton]}
+            onPress={handleSubmit}
+            disabled={submitting}
+          >
+            <Text style={styles.buttonText}>
+              {submitting ? 'Submitting...' : 'Submit Quiz'}
+            </Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={[styles.button, styles.primaryButton]}
+            onPress={handleNext}
+          >
+            <Text style={styles.buttonText}>Next</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#f8f9fa',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  header: {
+    backgroundColor: '#FF6B00',
+    padding: 20,
+    paddingTop: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#fff',
+    flex: 1,
+    textAlign: 'center',
+    marginHorizontal: 10,
+  },
+  headerRight: {
+    width: 24,
+  },
+  progressContainer: {
+    padding: 20,
+    backgroundColor: '#fff',
+  },
+  progressBar: {
+    height: 6,
+    backgroundColor: '#e0e0e0',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#FF6B00',
+  },
+  progressText: {
+    textAlign: 'center',
+    marginTop: 8,
+    fontSize: 12,
+    color: '#666',
+  },
+  content: {
+    flex: 1,
+    padding: 20,
+  },
+  questionContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 15,
+    padding: 20,
+  },
+  questionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  questionNumber: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#666',
+  },
+  questionStatus: {
+    fontSize: 12,
+    color: '#4CAF50',
+    fontWeight: 'bold',
+  },
+  questionText: {
+    fontSize: 18,
+    color: '#333',
+    marginBottom: 20,
+    lineHeight: 26,
+  },
+  optionsContainer: {
+    marginTop: 10,
+  },
+  optionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 15,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  optionSelected: {
+    borderColor: '#FF6B00',
+    backgroundColor: '#FF6B0010',
+  },
+  optionLabel: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginRight: 10,
+  },
+  optionText: {
+    fontSize: 16,
+    color: '#333',
+    flex: 1,
+  },
+  footer: {
+    flexDirection: 'row',
+    padding: 20,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+  },
+  button: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    flex: 1,
+    alignItems: 'center',
+  },
+  primaryButton: {
+    backgroundColor: '#FF6B00',
+    marginLeft: 10,
+  },
+  secondaryButton: {
+    backgroundColor: '#f5f5f5',
+    marginRight: 10,
+  },
+  submitButton: {
+    backgroundColor: '#4CAF50',
+    marginLeft: 10,
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  secondaryButtonText: {
+    color: '#666',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+});

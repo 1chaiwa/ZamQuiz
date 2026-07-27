@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "EduQuiz Zambia",
+    "slug": "eduquiz-zambia",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FF6B00"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.eduquizzambia.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#FF6B00"
+      },
+      "package": "com.eduquizzambia.app"
+    },
+    "web": {
+      "favicon": "./assets/icon.png"
+    }
+  }
+}

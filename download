@@ -1,0 +1,58 @@
+import React, { useState, useEffect } from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { supabase } from './utils/supabase';
+import Login from './components/Login';
+import Register from './components/Register';
+import Dashboard from './components/Dashboard';
+import QuizList from './components/QuizList';
+import QuizTaking from './components/QuizTaking';
+import Payment from './components/Payment';
+import Results from './components/Results';
+import TeacherDashboard from './components/TeacherDashboard';
+import './App.css';
+
+function App() {
+  const [session, setSession] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setSession(session);
+      }
+    );
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="loading-container">
+        <div className="loader"></div>
+        <p>Loading ZamQuiz...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="App">
+      <Routes>
+        <Route path="/login" element={!session ? <Login /> : <Navigate to="/" />} />
+        <Route path="/register" element={!session ? <Register /> : <Navigate to="/" />} />
+        <Route path="/" element={session ? <Dashboard /> : <Navigate to="/login" />} />
+        <Route path="/quizzes" element={session ? <QuizList /> : <Navigate to="/login" />} />
+        <Route path="/quiz/:id" element={session ? <QuizTaking /> : <Navigate to="/login" />} />
+        <Route path="/payment/:quizId" element={session ? <Payment /> : <Navigate to="/login" />} />
+        <Route path="/results/:attemptId" element={session ? <Results /> : <Navigate to="/login" />} />
+        <Route path="/teacher" element={session ? <TeacherDashboard /> : <Navigate to="/login" />} />
+      </Routes>
+    </div>
+  );
+}
+
+export default App;

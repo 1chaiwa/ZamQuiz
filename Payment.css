@@ -1,0 +1,133 @@
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { supabase } from '../utils/supabase';
+import './Dashboard.css';
+
+export default function Dashboard() {
+  const [user, setUser] = useState(null);
+  const [subjects, setSubjects] = useState([]);
+  const [stats, setStats] = useState({
+    totalQuizzes: 0,
+    completed: 0,
+    averageScore: 0,
+  });
+  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    fetchUserData();
+    fetchSubjects();
+    fetchStats();
+  }, []);
+
+  const fetchUserData = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { data } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+      setUser(data);
+    }
+  };
+
+  const fetchSubjects = async () => {
+    const { data } = await supabase
+      .from('subjects')
+      .select('*')
+      .order('name');
+    setSubjects(data || []);
+    setLoading(false);
+  };
+
+  const fetchStats = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { data } = await supabase
+        .from('quiz_attempts')
+        .select('score, total_questions')
+        .eq('student_id', user.id)
+        .eq('status', 'completed');
+
+      if (data && data.length > 0) {
+        const total = data.length;
+        const avgScore = data.reduce((acc, curr) => acc + (curr.score / curr.total_questions * 100), 0) / total;
+        setStats({
+          totalQuizzes: data.length,
+          completed: data.length,
+          averageScore: Math.round(avgScore),
+        });
+      }
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    navigate('/login');
+  };
+
+  if (loading) {
+    return (
+      <div className="loading-container">
+        <div className="loader"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="dashboard">
+      <header className="dashboard-header">
+        <div className="header-content">
+          <div>
+            <h1>ZamQuiz</h1>
+            <p>Welcome back, {user?.full_name || 'Student'}</p>
+          </div>
+          <button onClick={handleLogout} className="logout-btn">Logout</button>
+        </div>
+      </header>
+
+      <div className="stats-grid">
+        <div className="stat-card">
+          <span className="stat-number">{stats.totalQuizzes}</span>
+          <span className="stat-label">Quizzes Taken</span>
+        </div>
+        <div className="stat-card">
+          <span className="stat-number">{stats.completed}</span>
+          <span className="stat-label">Completed</span>
+        </div>
+        <div className="stat-card">
+          <span className="stat-number">{stats.averageScore}%</span>
+          <span className="stat-label">Avg Score</span>
+        </div>
+      </div>
+
+      <div className="subjects-section">
+        <div className="subjects-section-header">
+          <div>
+            <h2>Subjects</h2>
+            <p className="section-subtitle">Choose a subject to start learning</p>
+          </div>
+          <button className="teacher-link-btn" onClick={() => navigate('/teacher')}>
+            Teacher View
+          </button>
+        </div>
+
+        <div className="subjects-grid">
+          {subjects.map(subject => (
+            <div
+              key={subject.id}
+              className="subject-card"
+              onClick={() => navigate('/quizzes', { state: { subjectId: subject.id } })}
+            >
+              <div className="subject-icon">
+                {subject.code.substring(0, 2)}
+              </div>
+              <h3>{subject.name}</h3>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

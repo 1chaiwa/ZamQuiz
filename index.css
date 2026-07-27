@@ -1,0 +1,162 @@
+import React, { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import { supabase } from '../utils/supabase';
+import './Auth.css';
+
+export default function Register() {
+  const [formData, setFormData] = useState({
+    email: '',
+    password: '',
+    confirmPassword: '',
+    fullName: '',
+    grade: '',
+    school: '',
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const navigate = useNavigate();
+
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    setError('');
+
+    if (formData.password !== formData.confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+
+    if (formData.password.length < 6) {
+      setError('Password must be at least 6 characters');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const { data: { user }, error: signUpError } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
+      });
+
+      if (signUpError) throw signUpError;
+
+      if (user) {
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .insert({
+            id: user.id,
+            full_name: formData.fullName,
+            grade: formData.grade,
+            school: formData.school,
+            role: 'student',
+          });
+
+        if (profileError) throw profileError;
+
+        alert('Registration successful! Please check your email to verify your account.');
+        navigate('/login');
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="auth-container">
+      <div className="auth-card">
+        <div className="auth-header">
+          <h1>ZamQuiz</h1>
+          <p>Learn • Quiz • Excel</p>
+        </div>
+
+        <form onSubmit={handleRegister} className="auth-form">
+          <h2>Create Account</h2>
+          <p className="auth-subtitle">Join ZamQuiz to start learning</p>
+
+          {error && <div className="error-message">{error}</div>}
+
+          <div className="form-group">
+            <label>Full Name</label>
+            <input
+              type="text"
+              value={formData.fullName}
+              onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
+              placeholder="Enter your full name"
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Email Address</label>
+            <input
+              type="email"
+              value={formData.email}
+              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              placeholder="Enter your email"
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Password</label>
+            <input
+              type="password"
+              value={formData.password}
+              onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+              placeholder="Create a password"
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Confirm Password</label>
+            <input
+              type="password"
+              value={formData.confirmPassword}
+              onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+              placeholder="Confirm your password"
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Grade</label>
+            <select
+              value={formData.grade}
+              onChange={(e) => setFormData({ ...formData, grade: e.target.value })}
+              required
+            >
+              <option value="">Select your grade</option>
+              <option value="Form 1">Form 1</option>
+              <option value="Form 2">Form 2</option>
+              <option value="Form 3">Form 3</option>
+              <option value="Grade 10">Grade 10</option>
+              <option value="Grade 11">Grade 11</option>
+              <option value="Grade 12">Grade 12</option>
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label>School (Optional)</label>
+            <input
+              type="text"
+              value={formData.school}
+              onChange={(e) => setFormData({ ...formData, school: e.target.value })}
+              placeholder="Enter your school name"
+            />
+          </div>
+
+          <button type="submit" className="btn-primary" disabled={loading}>
+            {loading ? 'Creating Account...' : 'Create Account'}
+          </button>
+
+          <p className="auth-link">
+            Already have an account? <Link to="/login">Sign In</Link>
+          </p>
+        </form>
+      </div>
+    </div>
+  );
+}

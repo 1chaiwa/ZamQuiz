@@ -1,265 +1,121 @@
-import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  Alert,
-  ActivityIndicator,
-  ScrollView,
-} from 'react-native';
-import { supabase } from '../utils/supabase';
-import { Ionicons } from '@expo/vector-icons';
+# ZamQuiz (Web)
 
-export default function Register({ navigation }) {
-  const [formData, setFormData] = useState({
-    email: '',
-    password: '',
-    confirmPassword: '',
-    fullName: '',
-    grade: '',
-    school: '',
-  });
-  const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
+A React web version of the quiz app, backed by the same Supabase project as
+the mobile app — students take subject quizzes, teachers create them, and
+paid quizzes unlock via a simulated mobile-money payment step.
 
-  const handleRegister = async () => {
-    if (!formData.email || !formData.password || !formData.fullName) {
-      Alert.alert('Error', 'Please fill in all required fields');
-      return;
-    }
+Your Supabase credentials are already wired in via `.env`:
 
-    if (formData.password !== formData.confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
-      return;
-    }
+```
+REACT_APP_SUPABASE_URL=https://hbjddsvllblsbdlzgfmz.supabase.co
+REACT_APP_SUPABASE_ANON_KEY=<your anon key>
+```
 
-    if (formData.password.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters');
-      return;
-    }
+Create React App only exposes env vars prefixed `REACT_APP_` to the browser
+bundle, and only reads them at build time — restart `npm start` (dev) or
+re-run `npm run build` (prod) after changing `.env`.
 
-    setLoading(true);
-    try {
-      const { data: { user }, error: signUpError } = await supabase.auth.signUp({
-        email: formData.email,
-        password: formData.password,
-      });
+## 1. Database
 
-      if (signUpError) throw signUpError;
+This uses the **same Supabase project** as the mobile app. If you haven't
+already run `supabase-schema.sql` against it, do that first in the Supabase
+SQL Editor. It includes the fix for a missing `profiles` `INSERT` policy —
+without it, registration creates the auth user but silently fails to save
+their name/grade/school, so if you're setting this project up fresh, don't
+skip it.
 
-      if (user) {
-        // Create profile
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .insert({
-            id: user.id,
-            full_name: formData.fullName,
-            grade: formData.grade,
-            school: formData.school,
-            role: 'student',
-          });
+## 2. Install & run locally
 
-        if (profileError) throw profileError;
+```bash
+npm install
+npm start
+```
 
-        Alert.alert(
-          'Registration Successful',
-          'Your account has been created. Please check your email to verify your account.',
-          [
-            {
-              text: 'OK',
-              onPress: () => navigation.navigate('Login'),
-            },
-          ]
-        );
-      }
-    } catch (error) {
-      Alert.alert('Registration Failed', error.message);
-    }
-    setLoading(false);
-  };
+Opens at `http://localhost:3000`.
 
-  return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-    >
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={24} color="#fff" />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Create Account</Text>
-          <View style={styles.headerRight} />
-        </View>
+## 3. Deploy to GitHub Pages
 
-        <View style={styles.formContainer}>
-          <Text style={styles.title}>Join EduQuiz Zambia</Text>
-          <Text style={styles.subtitle}>
-            Create your account to start learning
-          </Text>
+`package.json` already has `homepage` set to
+`https://1chaiwa.github.io/ZamQuiz` and the `gh-pages` package configured.
 
-          <TextInput
-            style={styles.input}
-            placeholder="Full Name"
-            value={formData.fullName}
-            onChangeText={(text) => setFormData({ ...formData, fullName: text })}
-          />
+```bash
+npm install
+npm run deploy
+```
 
-          <TextInput
-            style={styles.input}
-            placeholder="Email Address"
-            value={formData.email}
-            onChangeText={(text) => setFormData({ ...formData, email: text })}
-            keyboardType="email-address"
-            autoCapitalize="none"
-          />
+This runs `predeploy` (build) then pushes the compiled `/build` folder to a
+`gh-pages` branch of your repo — that's what GitHub Pages actually serves.
+Your source branch (e.g. `main`) never needs the built files, and your local
+`.env` never gets pushed anywhere (it's git-ignored) — only the *values*
+baked into the compiled JS go out, which is fine: this is the anon key,
+meant to be public, and your data stays protected by the RLS policies in
+`supabase-schema.sql`.
 
-          <View style={styles.passwordContainer}>
-            <TextInput
-              style={[styles.input, styles.passwordInput]}
-              placeholder="Password"
-              value={formData.password}
-              onChangeText={(text) => setFormData({ ...formData, password: text })}
-              secureTextEntry={!showPassword}
-            />
-            <TouchableOpacity
-              style={styles.eyeIcon}
-              onPress={() => setShowPassword(!showPassword)}
-            >
-              <Ionicons
-                name={showPassword ? 'eye-off' : 'eye'}
-                size={24}
-                color="#666"
-              />
-            </TouchableOpacity>
-          </View>
+In your repo settings → **Pages**, make sure the source is set to the
+`gh-pages` branch (the `gh-pages` npm package creates/updates this branch
+automatically the first time you run `npm run deploy`).
 
-          <TextInput
-            style={styles.input}
-            placeholder="Confirm Password"
-            value={formData.confirmPassword}
-            onChangeText={(text) => setFormData({ ...formData, confirmPassword: text })}
-            secureTextEntry={!showPassword}
-          />
+## Important fix: HashRouter, not BrowserRouter
 
-          <TextInput
-            style={styles.input}
-            placeholder="Grade (e.g., Form 1, Grade 10)"
-            value={formData.grade}
-            onChangeText={(text) => setFormData({ ...formData, grade: text })}
-          />
+The routing setup you had used `BrowserRouter`. On GitHub Pages there's no
+server to rewrite unknown paths back to `index.html`, so any direct link or
+page refresh on a route like `/ZamQuiz/quizzes` would 404. This project uses
+`HashRouter` instead (`src/index.js`), so URLs look like
+`https://1chaiwa.github.io/ZamQuiz/#/quizzes` — slightly less pretty, but it
+always resolves correctly on static hosting with zero extra config. If you
+later move this to a host that supports rewrites (Vercel, Netlify, your own
+server), you can switch back to `BrowserRouter` and drop the `#`.
 
-          <TextInput
-            style={styles.input}
-            placeholder="School Name (Optional)"
-            value={formData.school}
-            onChangeText={(text) => setFormData({ ...formData, school: text })}
-          />
+## Project structure
 
-          <TouchableOpacity
-            style={styles.registerButton}
-            onPress={handleRegister}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.registerButtonText}>Create Account</Text>
-            )}
-          </TouchableOpacity>
+```
+public/
+  index.html
+  manifest.json
+  favicon.ico, logo192.png, logo512.png   # placeholder icons — swap for your logo
+src/
+  index.js              # HashRouter setup
+  App.js                # route definitions + auth gate
+  utils/supabase.js     # Supabase client, reads .env
+  components/
+    Login.js / Register.js / Auth.css
+    Dashboard.js / Dashboard.css          # student home
+    QuizList.js / QuizList.css
+    QuizTaking.js / QuizTaking.css
+    Payment.js / Payment.css
+    Results.js / Results.css
+    TeacherDashboard.js / TeacherDashboard.css
+supabase-schema.sql
+```
 
-          <TouchableOpacity onPress={() => navigation.navigate('Login')}>
-            <Text style={styles.loginLink}>
-              Already have an account? <Text style={styles.linkText}>Sign In</Text>
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
-  );
-}
+## Notes on how this differs from a straight port of the mobile app
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8f9fa',
-  },
-  scrollContent: {
-    flexGrow: 1,
-  },
-  header: {
-    backgroundColor: '#FF6B00',
-    padding: 20,
-    paddingTop: 40,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  headerRight: {
-    width: 24,
-  },
-  formContainer: {
-    padding: 30,
-    flex: 1,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 5,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 30,
-  },
-  input: {
-    backgroundColor: '#f5f5f5',
-    borderRadius: 10,
-    padding: 15,
-    marginBottom: 15,
-    fontSize: 16,
-  },
-  passwordContainer: {
-    position: 'relative',
-  },
-  passwordInput: {
-    paddingRight: 50,
-  },
-  eyeIcon: {
-    position: 'absolute',
-    right: 15,
-    top: 15,
-  },
-  registerButton: {
-    backgroundColor: '#FF6B00',
-    borderRadius: 10,
-    padding: 15,
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  registerButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  loginLink: {
-    textAlign: 'center',
-    marginTop: 20,
-    color: '#666',
-    fontSize: 14,
-  },
-  linkText: {
-    color: '#FF6B00',
-    fontWeight: 'bold',
-  },
-});
+The mobile (React Native) version passed a live callback function through
+navigation params so the Payment screen could hand control back to
+QuizTaking after paying. That only works because RN screens share the same
+JS memory. On the web, each route is a full navigation, so:
+
+- **QuizTaking** persists the in-progress attempt (id, answers, current
+  question) to `sessionStorage`, keyed by quiz id. When the user is sent to
+  `/payment/:quizId` and comes back, it resumes the same attempt instead of
+  silently creating a duplicate one.
+- **Results** first tries the score/details passed via navigation `state`
+  (fast path right after submitting), and falls back to querying Supabase
+  directly by `attemptId` if that's missing — e.g. if the results page gets
+  refreshed or opened from a saved link.
+
+## Known limitations (by design, not bugs)
+
+- **Payments are simulated** — `Payment.js` fakes a 2-second delay and marks
+  it complete. Swap in a real provider (MTN MoMo, Airtel Money, Flutterwave,
+  DPO, etc.) before taking real money, ideally verifying payment
+  server-side via a Supabase Edge Function rather than trusting the client.
+- **Question type support** is multiple-choice only, matching what
+  `TeacherDashboard.js` creates.
+- Registration always creates `role: 'student'`. To test the Teacher
+  Dashboard, sign up normally then run:
+  ```sql
+  UPDATE public.profiles SET role = 'teacher' WHERE id = '<user-uuid>';
+  ```
+- The placeholder icons in `public/` are generated orange squares — replace
+  with your real logo.

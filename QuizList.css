@@ -1,0 +1,139 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { supabase } from '../utils/supabase';
+import './Results.css';
+
+function getGrade(score) {
+  if (score >= 80) return { text: 'A', color: '#00B894', label: 'Excellent!' };
+  if (score >= 70) return { text: 'B', color: '#8BC34A', label: 'Very Good!' };
+  if (score >= 60) return { text: 'C', color: '#FDCB6E', label: 'Good' };
+  if (score >= 50) return { text: 'D', color: '#FF9800', label: 'Satisfactory' };
+  return { text: 'F', color: '#E17055', label: 'Needs Improvement' };
+}
+
+export default function Results() {
+  const { attemptId } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const [summary, setSummary] = useState(location.state || null);
+  const [detailedResults, setDetailedResults] = useState([]);
+  const [loading, setLoading] = useState(!location.state);
+
+  const fetchSummaryFromDb = useCallback(async () => {
+    const { data } = await supabase
+      .from('quiz_attempts')
+      .select(`*, quizzes (title)`)
+      .eq('id', attemptId)
+      .single();
+
+    if (data) {
+      setSummary({
+        score: data.score,
+        totalQuestions: data.total_questions,
+        correctAnswers: data.correct_answers,
+        quizTitle: data.quizzes?.title,
+      });
+    }
+    setLoading(false);
+  }, [attemptId]);
+
+  const fetchDetailedResults = useCallback(async () => {
+    const { data } = await supabase
+      .from('student_answers')
+      .select(`*, questions (question_text, correct_answer, explanation)`)
+      .eq('attempt_id', attemptId);
+    setDetailedResults(data || []);
+  }, [attemptId]);
+
+  useEffect(() => {
+    if (!summary) {
+      fetchSummaryFromDb();
+    }
+    fetchDetailedResults();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attemptId]);
+
+  if (loading || !summary) {
+    return (
+      <div className="loading-container">
+        <div className="loader"></div>
+      </div>
+    );
+  }
+
+  const { score, totalQuestions, correctAnswers, quizTitle } = summary;
+  const wrongAnswers = totalQuestions - correctAnswers;
+  const grade = getGrade(score);
+
+  return (
+    <div className="results">
+      <header className="results-header">
+        <h1>Quiz Results</h1>
+        <p>{quizTitle}</p>
+      </header>
+
+      <div className="score-card">
+        <p className="score-number">{score}%</p>
+        <span className="grade-badge" style={{ background: grade.color + '20', color: grade.color }}>
+          {grade.text}
+        </span>
+        <p className="grade-label">{grade.label}</p>
+      </div>
+
+      <div className="stats-row">
+        <div className="stat-item">
+          <p className="stat-number">{correctAnswers}</p>
+          <p className="stat-label">Correct</p>
+        </div>
+        <div className="stat-item">
+          <p className="stat-number" style={{ color: '#E17055' }}>{wrongAnswers}</p>
+          <p className="stat-label">Wrong</p>
+        </div>
+        <div className="stat-item">
+          <p className="stat-number">{totalQuestions}</p>
+          <p className="stat-label">Total</p>
+        </div>
+      </div>
+
+      <div className="actions">
+        <button className="retry-btn" onClick={() => navigate('/quizzes')}>
+          Try Another Quiz
+        </button>
+        <button className="home-btn" onClick={() => navigate('/')}>
+          Go Home
+        </button>
+      </div>
+
+      {detailedResults.length > 0 && (
+        <div className="detailed-section">
+          <h2>Detailed Review</h2>
+          {detailedResults.map((item, index) => (
+            <div key={item.id || index} className="review-item">
+              <div className="review-header">
+                <span className="review-number">Q{index + 1}</span>
+                <span
+                  className="review-status"
+                  style={{
+                    background: item.is_correct ? '#00B89420' : '#E1705520',
+                    color: item.is_correct ? '#00B894' : '#E17055',
+                  }}
+                >
+                  {item.is_correct ? 'Correct' : 'Incorrect'}
+                </span>
+              </div>
+              <p className="review-question">{item.questions?.question_text}</p>
+              <p className="review-answer">Your answer: {item.selected_answer || 'Not answered'}</p>
+              {!item.is_correct && (
+                <p className="review-correct">Correct answer: {item.questions?.correct_answer}</p>
+              )}
+              {item.questions?.explanation && (
+                <p className="review-explanation">Explanation: {item.questions.explanation}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

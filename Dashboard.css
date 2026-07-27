@@ -1,0 +1,275 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { supabase } from '../utils/supabase';
+import './QuizTaking.css';
+
+const FREE_QUESTION_LIMIT = 3; // matches the mobile app: payment kicks in after question index 3
+
+function storageKey(quizId) {
+  return `zamquiz_attempt_${quizId}`;
+}
+
+export default function QuizTaking() {
+  const { id: quizId } = useParams();
+  const navigate = useNavigate();
+
+  const [quiz, setQuiz] = useState(null);
+  const [questions, setQuestions] = useState([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [answers, setAnswers] = useState({});
+  const [attemptId, setAttemptId] = useState(null);
+  const [isPaid, setIsPaid] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+
+  const persist = useCallback((patch) => {
+    const raw = sessionStorage.getItem(storageKey(quizId));
+    const current = raw ? JSON.parse(raw) : {};
+    sessionStorage.setItem(storageKey(quizId), JSON.stringify({ ...current, ...patch }));
+  }, [quizId]);
+
+  const fetchQuizData = useCallback(async () => {
+    setLoading(true);
+
+    const { data: quizData } = await supabase
+      .from('quizzes')
+      .select(`*, subjects (name, code), grades (name)`)
+      .eq('id', quizId)
+      .single();
+    setQuiz(quizData);
+
+    const { data: questionsData } = await supabase
+      .from('questions')
+      .select('*')
+      .eq('quiz_id', quizId)
+      .order('created_at');
+    setQuestions(questionsData || []);
+
+    const { data: { user } } = await supabase.auth.getUser();
+
+    // Resume an in-progress attempt if one exists in this browser session,
+    // otherwise start a fresh one. This avoids creating a duplicate attempt
+    // every time the user is bounced to /payment and back.
+    const savedRaw = sessionStorage.getItem(storageKey(quizId));
+    const saved = savedRaw ? JSON.parse(savedRaw) : null;
+
+    if (saved?.attemptId) {
+      const { data: existingAttempt } = await supabase
+        .from('quiz_attempts')
+        .select('*')
+        .eq('id', saved.attemptId)
+        .single();
+
+      if (existingAttempt && existingAttempt.status === 'in_progress') {
+        setAttemptId(existingAttempt.id);
+        setIsPaid(existingAttempt.is_paid);
+        setAnswers(saved.answers || {});
+        setCurrentIndex(saved.currentIndex || 0);
+        setLoading(false);
+        return;
+      }
+    }
+
+    const { data: attemptData } = await supabase
+      .from('quiz_attempts')
+      .insert({
+        student_id: user.id,
+        quiz_id: quizId,
+        total_questions: questionsData?.length || 0,
+        status: 'in_progress',
+      })
+      .select()
+      .single();
+
+    setAttemptId(attemptData.id);
+    setIsPaid(false);
+    persist({ attemptId: attemptData.id, answers: {}, currentIndex: 0 });
+    setLoading(false);
+  }, [quizId, persist]);
+
+  useEffect(() => {
+    fetchQuizData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quizId]);
+
+  const handleAnswerSelect = (questionId, answer) => {
+    const updated = { ...answers, [questionId]: answer };
+    setAnswers(updated);
+    persist({ answers: updated });
+  };
+
+  const goToIndex = (index) => {
+    setCurrentIndex(index);
+    persist({ currentIndex: index });
+  };
+
+  const handleNext = async () => {
+    const nextIndex = currentIndex + 1;
+    if (nextIndex >= questions.length) return;
+
+    if (quiz?.is_paid && nextIndex >= FREE_QUESTION_LIMIT && !isPaid) {
+      // Re-check the attempt's paid status fresh from the DB in case the
+      // user already paid in a previous visit to this attempt.
+      const { data: freshAttempt } = await supabase
+        .from('quiz_attempts')
+        .select('is_paid')
+        .eq('id', attemptId)
+        .single();
+
+      if (freshAttempt?.is_paid) {
+        setIsPaid(true);
+        goToIndex(nextIndex);
+        return;
+      }
+
+      navigate(`/payment/${quiz.id}`, {
+        state: {
+          attemptId,
+          amount: quiz.price,
+          returnTo: `/quiz/${quiz.id}`,
+        },
+      });
+      return;
+    }
+
+    goToIndex(nextIndex);
+  };
+
+  const handlePrevious = () => {
+    if (currentIndex > 0) goToIndex(currentIndex - 1);
+  };
+
+  const handleSubmit = async () => {
+    if (!window.confirm('Are you sure you want to submit your answers?')) return;
+
+    setSubmitting(true);
+    let correctCount = 0;
+
+    for (const question of questions) {
+      const selectedAnswer = answers[question.id];
+      const isCorrect = selectedAnswer === question.correct_answer;
+      if (isCorrect) correctCount++;
+
+      await supabase.from('student_answers').insert({
+        attempt_id: attemptId,
+        question_id: question.id,
+        selected_answer: selectedAnswer || '',
+        is_correct: isCorrect,
+        marks_awarded: isCorrect ? question.marks : 0,
+      });
+    }
+
+    const score = Math.round((correctCount / questions.length) * 100);
+    await supabase
+      .from('quiz_attempts')
+      .update({
+        score,
+        correct_answers: correctCount,
+        wrong_answers: questions.length - correctCount,
+        completed_at: new Date().toISOString(),
+        status: 'completed',
+      })
+      .eq('id', attemptId);
+
+    sessionStorage.removeItem(storageKey(quizId));
+    setSubmitting(false);
+
+    navigate(`/results/${attemptId}`, {
+      state: {
+        score,
+        totalQuestions: questions.length,
+        correctAnswers: correctCount,
+        quizTitle: quiz.title,
+      },
+    });
+  };
+
+  if (loading) {
+    return (
+      <div className="loading-container">
+        <div className="loader"></div>
+      </div>
+    );
+  }
+
+  if (!questions.length) {
+    return (
+      <div className="quiztaking">
+        <div className="empty-state">
+          <p className="empty-title">This quiz has no questions yet</p>
+          <button className="btn-primary" onClick={() => navigate('/quizzes')}>Back to Quizzes</button>
+        </div>
+      </div>
+    );
+  }
+
+  const question = questions[currentIndex];
+  const isAnswered = answers[question.id] !== undefined;
+  const progressPct = ((currentIndex + 1) / questions.length) * 100;
+
+  return (
+    <div className="quiztaking">
+      <header className="qt-header">
+        <button className="back-btn" onClick={() => navigate('/quizzes')}>←</button>
+        <h1>{quiz?.title}</h1>
+        <div style={{ width: 20 }} />
+      </header>
+
+      <div className="progress-container">
+        <div className="progress-bar">
+          <div className="progress-fill" style={{ width: `${progressPct}%` }} />
+        </div>
+        <p className="progress-text">{currentIndex + 1} of {questions.length}</p>
+      </div>
+
+      <div className="qt-content">
+        <div className="question-card">
+          <div className="question-header">
+            <span className="question-number">Question {currentIndex + 1} of {questions.length}</span>
+            <span className={`question-status ${isAnswered ? 'answered' : ''}`}>
+              {isAnswered ? '✓ Answered' : 'Not Answered'}
+            </span>
+          </div>
+
+          <p className="question-text">{question.question_text}</p>
+
+          {question.question_type === 'multiple_choice' && (
+            <div className="options-container">
+              {Object.entries(question.options || {}).map(([key, value]) => (
+                <button
+                  key={key}
+                  className={`option-button ${answers[question.id] === key ? 'selected' : ''}`}
+                  onClick={() => handleAnswerSelect(question.id, key)}
+                >
+                  <span className="option-label">{key}.</span>
+                  <span className="option-text">{value}</span>
+                  {answers[question.id] === key && <span className="check-mark">✓</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="qt-footer">
+        <button
+          className="btn-secondary"
+          onClick={handlePrevious}
+          disabled={currentIndex === 0}
+        >
+          Previous
+        </button>
+
+        {currentIndex === questions.length - 1 ? (
+          <button className="btn-submit" onClick={handleSubmit} disabled={submitting}>
+            {submitting ? 'Submitting...' : 'Submit Quiz'}
+          </button>
+        ) : (
+          <button className="btn-primary-inline" onClick={handleNext}>
+            Next
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
